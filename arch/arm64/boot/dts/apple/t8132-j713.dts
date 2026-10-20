@@ -427,3 +427,5 @@
 		status = "disabled";
 	};
 };
+#include "t8132-j713-gpu.dtsi"
+#include "t8132-j713-display.dtsi"
