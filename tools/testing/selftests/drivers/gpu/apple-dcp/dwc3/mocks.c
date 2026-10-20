@@ -1,3 +1,5 @@
+/* This fixture selects the original controller layout, not T8132. */
+#define of_device_is_compatible(...) false
 /* SPDX-License-Identifier: GPL-2.0-only */
 struct apple_atcphy {
 	const struct atcphy_hw *hw;

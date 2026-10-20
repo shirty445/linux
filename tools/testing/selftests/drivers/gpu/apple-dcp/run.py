@@ -16,7 +16,7 @@ import struct
 import tempfile
 import traceback
 
-from common import run_unit
+from common import run_unit, block
 import edid
 import recovery
 import lifecycle
@@ -28,6 +28,7 @@ import accounting
 import idle
 import rate
 import boot
+import m4
 
 
 def parking_unit(root):
@@ -39,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[6])
     parser.add_argument('--output', type=Path, help='retain generated C, commands and results here')
-    parser.add_argument('--group', choices=('all', 'edid', 'rate', 'phy', 'lifecycle', 'boot', 'quiesce'), default='all')
+    parser.add_argument('--group', choices=('all', 'edid', 'rate', 'phy', 'lifecycle', 'boot', 'quiesce', 'm4'), default='all')
     args = parser.parse_args()
     root = args.source.resolve()
     output = args.output or Path(tempfile.mkdtemp(prefix='apple-dcp-selftest-'))
@@ -50,6 +51,12 @@ def main():
                                        'orientation-faults', 'backend-change', 'safe-first',
                                        'failed-flip-return', 'live-park'))
     tests = [
+        ('m4', 'm4-wire-golden', lambda r: m4.golden_check(r, output), (), ()),
+        ('m4', 'm4-protocol', m4.protocol, ((),), ('-Wno-unused-function', '-Wno-unused-const-variable')),
+        ('m4', 'm4-common-plane', m4.plane, ((),), ('-Wno-unused-function', '-Wno-unused-const-variable')),
+        ('m4', 'm4-producer-retirement', m4.prepare, ((),), ('-Wno-unused-function',)),
+        ('m4', 'm4-dpms-retirement', m4.blank, ((),), ('-Wno-unused-function', '-Wno-unused-const-variable')),
+        ('m4', 'm4-dart-consumer', m4.dart, ((),), ('-Wno-unused-function',)),
         ('boot', 'oslog-events', boot.oslog, ((),), ()),
         ('edid', 'dpavserv-start', edid.startup, ((),), ()),
         ('edid', 'service-rebind', edid.rebind, ((),), ()),
@@ -108,6 +115,27 @@ def main():
                 result['producer_passed'] = True
             elif isinstance(unit, tuple):
                 unit, cases = unit
+            if unit is not None and name in ('provider-admission', 'ordered-rx',
+                    'publication-hpd', 'stale-crtc-poweroff', 'readiness'):
+                # These fixtures select older external-display backends. The M4
+                # transport is covered by the separate m4 group, not mocked here.
+                prefix = ('#include <stdbool.h>\n#include <assert.h>\n'
+                          '#define iomfb_is_m4(...) false\n'
+                          '#define iomfb_m4_get_mode(...) (-95)\n'
+                          '#define iomfb_m4_blank(...) (-95)\n')
+                if 'dcp_fail_stop(' in unit:
+                    prefix += ('struct apple_dcp;\n'
+                               'static inline bool dcp_fail_stop(const struct apple_dcp *dcp);\n')
+                    unit += '\n' + block((apple / 'dcp-internal.h').read_text(),
+                                          'static inline bool dcp_fail_stop(')
+                if name == 'ordered-rx':
+                    import re
+                    rtkit = (root / 'drivers/soc/apple/rtkit.c').read_text()
+                    endpoint = re.search(r'APPLE_RTKIT_EP_COREANALYTICS\s*=\s*(\d+)', rtkit).group(1)
+                    prefix += ('#define APPLE_RTKIT_EP_COREANALYTICS ' + endpoint + '\n'
+                               '#define apple_rtkit_coreanalytics_rx(...) '
+                               'assert(!"CoreAnalytics is outside this ordered-display fixture")\n')
+                unit = prefix + unit
             if unit is not None:
                 result['translation_unit_sha256'] = run_unit(name, unit, output, cases, includes if name == 'service-rebind' else (), flags)
             if name == 'service-rebind':

@@ -135,7 +135,7 @@ enum atcphy_mode { APPLE_ATCPHY_MODE_OFF, APPLE_ATCPHY_MODE_USB2,
 enum atcphy_pipehandler_state { ATCPHY_PIPEHANDLER_STATE_DUMMY, ATCPHY_PIPEHANDLER_STATE_USB3 };
 struct apple_atcphy {
  void *dev; int lock;
- const struct { bool has_usb4,has_t8140_dp,dp_t8122; } *hw;
+ const struct { bool has_usb4,has_t8140_dp,dp_t8122; u32 usb2phy_sig_host; } *hw;
  struct { void *usb2phy; } regs;
  bool fixed_usb2,host_active,mode_dirty,pipe_pending,usb_off_pending,ss_tunables,dp_tunables;
  bool usb3_port_off,park_owed,dp_only,pd_was_off;

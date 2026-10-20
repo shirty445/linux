@@ -1,0 +1,70 @@
+SPDX-License-Identifier: GPL-2.0-only OR MIT
+
+J713 DCP/DART error-path developer regressions
+=============================================
+
+Run manually from a kernel source checkout:
+
+  python3 tools/testing/m4-dcp-errors/run.py
+
+Requires Python 3 and a host GCC or Clang supporting UndefinedBehaviorSanitizer.
+HOSTCC or --cc selects the compiler, including compiler wrappers. This is a
+source-based developer test, not an installed kselftest. It creates temporary
+host C units/executables and never builds a kernel, accesses hardware or runs CTS.
+Nothing is generated in the source checkout.
+
+Preserve generated sources, commands, source hashes and failure logs in a new
+directory, and optionally run the real Kconfig dependency matrix using an
+existing host scripts/kconfig/conf binary:
+
+  python3 tools/testing/m4-dcp-errors/run.py \
+    --source-root /path/to/kernel \
+    --output-dir /path/to/new-results \
+    --kconfig-conf /path/to/kernel-build/scripts/kconfig/conf
+
+KCONFIG_CONF also selects that existing binary. The runner does not build it.
+Without it the Kconfig matrix is explicitly reported as skipped; header-stub
+linking and conditional module preprocessing still run. Run once with GCC and
+once with Clang for both compiler controls.
+
+The harness extracts the current production functions and register definitions.
+Transport, MMIO, locks, pages and DRM context are synthetic host boundaries:
+
+* Borrowed v2 IRQ routing: actual common IRQ handler, diagnostic unlock helper
+  and TLB command routine; owned SID23 and unowned SID5; W1C exception ACK,
+  barrier, readback and encoded FLUSH_UNLOCK ordering. Also covers v2.3 block
+  exceptions and legacy routing. MMIO mocks implement W1C, not hardware timing.
+* Read-only admission: the actual probe predicate and pending-fault helper must
+  notice v2 exception/block state without acknowledging or modifying it.
+* Quarantined SID0 unmap: all pages across a child-table boundary must be pinned
+  before full logical retirement. Existing hardware PTEs remain; a new map is
+  refused by the sticky failure state. Failed pin, normal unmap and failed-flush
+  PTE restoration controls remain distinct.
+* Asynchronous callback failures: dispatch, finish and ACK errors must log the
+  method/tag, lengths, stage and errno. Failed dispatch cannot send an ACK;
+  successful callbacks produce no error diagnostic.
+* Module-disabled public APIs must compile/link as EOPNOTSUPP stubs. The actual
+  retained implementation fragments are conditionally preprocessed to ensure
+  ordinary modular DART contains no private ARM64 DMA calls; the native graphics
+  defconfig must explicitly opt in to the built-in retained feature.
+* Optional Kconfig: unchanged production producer blocks plus synthetic unrelated
+  dependencies cover ordinary modular DART, retained built-in, modular DRM with
+  built-in DART, unsupported page size, and disabled retained feature. This is
+  dependency reachability, not full kernel configuration or module linking.
+
+An optional old source snapshot can act as a negative control:
+
+  python3 tools/testing/m4-dcp-errors/run.py \
+    --negative-source-root /path/to/old-kernel-source \
+    --output-dir /path/to/new-results
+
+Every production-function control must fail against that snapshot; it should
+contain the old borrowed-v2 routing, zero-return quarantined unmap and silent
+callback behavior. No historical source or captured firmware data is bundled.
+
+These tests do not prove DMA cache coherency, firmware layout, paired shared-IRQ
+ownership, real interrupt delivery, resource lifetime during device removal,
+full kernel Kconfig, ARM64 module linking, or successful display operation.
+Full kernel/module builds and a fresh reboot with native KMS checks remain
+separate qualification. A working fallback does not establish native firmware
+clock, bandwidth or thermal-policy parity.

@@ -1649,7 +1649,7 @@ struct apple_connector { bool connected; };
 enum dcp_firmware_version { DCP_FIRMWARE_UNKNOWN, DCP_FIRMWARE_V_12_3, DCP_FIRMWARE_V_13_5,
     DCP_FIRMWARE_V_14_7, DCP_FIRMWARE_V_14_7_TEMPLATE, DCP_FIRMWARE_V_26_6 };
 struct apple_dcp {
-    bool crashed, external, external_native;
+    bool crashed, external, external_native, quiescing;
     unsigned int nr_typec_routes;
     enum dcp_firmware_version fw_compat;
     struct { int iomfb_method_profile; } hw;
@@ -1658,9 +1658,9 @@ struct apple_dcp {
     void *dev;
 };
 struct platform_device { struct apple_dcp *data; };
-struct drm_crtc { struct platform_device *dcp; };
+struct drm_crtc { struct platform_device *dcp; void *primary; };
 struct drm_display_mode { int unused; };
-struct drm_crtc_state { bool enable, vrr_enabled, modeset; struct drm_display_mode mode; };
+struct drm_crtc_state { bool enable, vrr_enabled, modeset; struct drm_display_mode mode; void *ctm, *degamma_lut, *gamma_lut; unsigned plane_mask; };
 /* mainline 7.2 renamed struct drm_atomic_state to struct drm_atomic_commit */
 struct drm_atomic_commit { struct drm_crtc_state crtc; };
 #define to_apple_crtc(x) (x)
@@ -1676,6 +1676,13 @@ static int __attribute__((unused)) iomfb_v14_7_atomic_check(struct apple_dcp *d,
 static int __attribute__((unused)) iomfb_v26_6_atomic_check(struct apple_dcp *d,
     struct drm_crtc *c, struct drm_atomic_commit *s)
 { (void)d; (void)c; (void)s; assert(!"26.6 backend on a non-26.6 DCP"); return -EINVAL; }
+static bool iomfb_is_m4(struct apple_dcp *d) { (void)d; return false; }
+static int iomfb_m4_error(struct apple_dcp *d) { (void)d; assert(false); return -ENODEV; }
+static int iomfb_m4_get_mode(struct apple_dcp *d,struct drm_display_mode *m)
+{ (void)d; (void)m; assert(false); return -ENODEV; }
+static unsigned drm_plane_mask(void *p) { (void)p; assert(false); return 0; }
+static bool drm_mode_equal(const struct drm_display_mode *a,const struct drm_display_mode *b)
+{ (void)a; (void)b; assert(false); return false; }
 /* Route-follow is for Type-C displays; this DCP has no Type-C routes. */
 static bool __attribute__((unused)) typec_follow_crtc = true;
 static int __attribute__((unused)) dcp_typec_follow_check(struct apple_dcp *d, struct drm_crtc *c,

@@ -2222,6 +2222,7 @@ static void clear32(void *p, u32 v) { mask32(p, v, 0); }
        polls == fail_poll || !(condition) ? -ETIMEDOUT : 0; })
 #define readl_poll_timeout readl_poll_timeout_atomic
 static void atcphy_usb2_power_on(struct apple_atcphy *p) { (void)p; usb2_on++; }
+static void atcphy_usb2_power_off(struct apple_atcphy *p) { (void)p; assert(!"USB2-only path is outside this USB4 fixture"); }
 static void atcphy_apply_tunables(struct apple_atcphy *p, enum atcphy_mode mode)
 { (void)p; (void)mode; }
 static void atc_tunnel_stop_t8103(struct apple_atcphy *p) { (void)p; }

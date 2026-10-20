@@ -577,6 +577,10 @@ struct apple_connector {''')
     state = state[:start]
 
     stubs = r'''
+/* The rate/HPD fixture is an external H17P sink; it never selects M4. */
+#define iomfb_is_v26_6(dcp) false
+#define iomfb_v26_6_get_mode(dcp,mode) (-ENODEV)
+#define of_property_read_u32(node,name,value) (-EINVAL)
 #define WRITE_ONCE(p,v) ((p)=(v))
 #define platform_device apple_dcp
 #define platform_get_drvdata(p) ((struct apple_dcp *)(p))
