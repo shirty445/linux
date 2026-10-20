@@ -27,6 +27,7 @@
 #include "dcpext_scanout.h"
 #include "ibootep.h"
 #include "dcp-internal.h"
+#include "iomfb_m4.h"
 #include "parser.h"
 
 static bool tiled_split = true;
@@ -4003,6 +4004,8 @@ void dcp_link(struct platform_device *pdev, struct apple_crtc *crtc,
 		dcp->connector = connector;
 		dcp->connector_type = dcp->fixed_connector_type;
 	}
+	if (iomfb_is_m4(dcp))
+		WRITE_ONCE(connector->connected, !iomfb_m4_error(dcp) && dcp->active);
 }
 
 /* Called after component unbind has drained all firmware callbacks. The

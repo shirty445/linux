@@ -95,8 +95,9 @@ static u32 brightness_part2[] = {
 
 bool dcp_backlight_active(struct apple_dcp *dcp)
 {
-	return dcp->fw_compat == DCP_FIRMWARE_H17P &&
-		dcp->hw.iomfb_method_profile != DCP_IOMFB_METHODS_H17G &&
+	return ((dcp->fw_compat == DCP_FIRMWARE_H17P &&
+		 dcp->hw.iomfb_method_profile != DCP_IOMFB_METHODS_H17G) ||
+		iomfb_is_m4(dcp)) &&
 		READ_ONCE(dcp->backlight.state.ready);
 }
 
@@ -144,8 +145,9 @@ int dcp_backlight_configure(struct apple_dcp *dcp, u32 maximum,
 	unsigned long flags;
 	int ret;
 
-	if (dcp->fw_compat != DCP_FIRMWARE_H17P || !dcp_has_panel(dcp) ||
-	    !dcp->crtc || !kick)
+	if ((dcp->fw_compat != DCP_FIRMWARE_H17P &&
+	     !iomfb_is_m4(dcp)) ||
+	    !dcp_has_panel(dcp) || !dcp->crtc || !kick)
 		return -EINVAL;
 
 	mutex_lock(&dcp->bl_register_mutex);
@@ -156,7 +158,14 @@ int dcp_backlight_configure(struct apple_dcp *dcp, u32 maximum,
 		ret = dcp_bl_init(&dcp->backlight.state, maximum,
 				  inherited_valid, inherited,
 				  default_valid, default_nits);
-		if (!ret) {
+		if (!ret && iomfb_is_m4(dcp)) {
+			/*
+			 * The J713 panel jumps to new levels, and its first
+			 * present carries the requested level.
+			 */
+			dcp_bl_jump(&dcp->backlight.state);
+			dcp->backlight.kick = kick;
+		} else if (!ret) {
 			dcp->backlight.state.fade = true;
 			dcp->backlight.kick = kick;
 		}
@@ -537,8 +546,9 @@ int dcp_backlight_register(struct apple_dcp *dcp)
 		.scale = BACKLIGHT_SCALE_LINEAR,
 	};
 	props.max_brightness = min(dcp->brightness.maximum, MAX_BRIGHTNESS_PART2 - 1);
-	if (dcp->fw_compat == DCP_FIRMWARE_H17P &&
-	    dcp->hw.iomfb_method_profile != DCP_IOMFB_METHODS_H17G &&
+	if (((dcp->fw_compat == DCP_FIRMWARE_H17P &&
+	      dcp->hw.iomfb_method_profile != DCP_IOMFB_METHODS_H17G) ||
+	     iomfb_is_m4(dcp)) &&
 	    !dcp_backlight_active(dcp))
 		return -ENODATA;
 	if (dcp_backlight_active(dcp)) {

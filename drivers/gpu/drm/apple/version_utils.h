@@ -38,6 +38,8 @@ enum dcp_firmware_version {
 	DCP_FIRMWARE_H17P,
 	/* J613 macOS 26.6.2 (25G83) IOMFB over DCPLink (iomfb_v26_6.c). */
 	DCP_FIRMWARE_V_26_6,
+	/* T8132/J713 retained EP37 session. */
+	DCP_FIRMWARE_M4,
 };
 
 #endif /*__APPLE_VERSION_UTILS_H__*/

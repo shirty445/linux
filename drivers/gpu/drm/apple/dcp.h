@@ -66,6 +66,7 @@ bool dcp_fw_compat_is_14_7(struct platform_device *pdev);
 bool dcp_ext_unusable(struct platform_device *pdev);
 unsigned long* dcp_get_iomfb_surfaces(struct platform_device *pdev);
 int dcp_start(struct platform_device *pdev);
+int dcp_activate(struct platform_device *pdev);
 int dcp_wait_ready(struct platform_device *pdev, u64 timeout);
 void dcp_flush(struct drm_crtc *crtc, struct drm_atomic_commit *commit);
 void dcp_retain_framebuffer(struct platform_device *pdev,
@@ -77,6 +78,8 @@ void dcp_release_all_retained_framebuffers(struct apple_dcp *dcp);
 bool dcp_is_initialized(struct platform_device *pdev);
 void apple_crtc_vblank(struct apple_crtc *apple);
 void dcp_drm_crtc_vblank(struct apple_crtc *crtc);
+void dcp_drm_crtc_error(struct apple_crtc *crtc,
+			struct drm_crtc_state *state, int error);
 int dcp_get_modes(struct drm_connector *connector);
 enum drm_mode_status dcp_mode_valid(struct drm_connector *connector,
 				    const struct drm_display_mode *mode);

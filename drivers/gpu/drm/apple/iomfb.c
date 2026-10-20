@@ -36,6 +36,7 @@
 #include "dcp-internal.h"
 #include "iomfb.h"
 #include "iomfb_internal.h"
+#include "iomfb_m4.h"
 #include "parser.h"
 #include "trace.h"
 
@@ -642,7 +643,7 @@ void dcp_push(struct apple_dcp *dcp, bool oob, const struct dcp_method_entry *ca
 		return;
 	}
 
-	if (dcp->fw_compat == DCP_FIRMWARE_H17P && READ_ONCE(dcp->crashed))
+	if (dcp_fail_stop(dcp) && READ_ONCE(dcp->crashed))
 		return;
 
 	if (dcp->hw.iomfb_method_profile == DCP_IOMFB_METHODS_H17G &&
@@ -1797,6 +1798,21 @@ int dcp_get_modes(struct drm_connector *connector)
 		return 0;
 	}
 	dcp = platform_get_drvdata(pdev);
+	if (iomfb_is_m4(dcp)) {
+		struct drm_display_mode fixed;
+
+		if (iomfb_m4_get_mode(dcp, &fixed))
+			return 0;
+		mode = drm_mode_duplicate(dev, &fixed);
+		if (!mode)
+			return 0;
+		drm_mode_probed_add(connector, mode);
+		of_property_read_u32(dcp->dev->of_node, "apple,panel-width-mm",
+				     &connector->display_info.width_mm);
+		of_property_read_u32(dcp->dev->of_node, "apple,panel-height-mm",
+				     &connector->display_info.height_mm);
+		return 1;
+	}
 	modes = dcp_modes_snapshot(dcp, apple_connector, &nr_modes);
 
 	physical_edid = dcp->hw.iomfb_method_profile ==
@@ -2024,6 +2040,12 @@ enum drm_mode_status dcp_mode_valid(struct drm_connector *connector,
 	if (!pdev)
 		return MODE_ERROR;
 	dcp = platform_get_drvdata(pdev);
+	if (iomfb_is_m4(dcp)) {
+		struct drm_display_mode fixed;
+
+		return !iomfb_m4_get_mode(dcp, &fixed) && drm_mode_equal(mode, &fixed) ?
+			MODE_OK : MODE_BAD;
+	}
 
 	scoped_guard(mutex, &dcp->modes_lock)
 		if (!dcp_modes_for_connector(dcp, apple_connector))
@@ -2040,6 +2062,16 @@ int dcp_crtc_atomic_modeset(struct drm_crtc *crtc,
 	unsigned int action;
 	int ret = -EIO;
 	bool modeset;
+
+	if (iomfb_is_m4(dcp)) {
+		struct drm_display_mode fixed;
+
+		crtc_state = drm_atomic_get_new_crtc_state(commit, crtc);
+		if (!crtc_state || !crtc_state->active)
+			return 0;
+		ret = iomfb_m4_get_mode(dcp, &fixed);
+		return ret ? ret : drm_mode_equal(&crtc_state->mode, &fixed) ? 0 : -EINVAL;
+	}
 
 	/* Disconnect cannot pass the admission check before these RPCs finish. */
 	guard(mutex)(&dcp->external_lock);
@@ -2188,6 +2220,12 @@ bool dcp_crtc_mode_fixup(struct drm_crtc *crtc,
 	struct apple_crtc *apple_crtc = to_apple_crtc(crtc);
 	struct platform_device *pdev = apple_crtc->dcp;
 	struct apple_dcp *dcp = platform_get_drvdata(pdev);
+
+	if (iomfb_is_m4(dcp)) {
+		struct drm_display_mode fixed;
+
+		return !iomfb_m4_get_mode(dcp, &fixed) && drm_mode_equal(mode, &fixed);
+	}
 
 	/*
 	 * TODO: support synthesized modes through scaling
@@ -2560,6 +2598,29 @@ void dcp_flush(struct drm_crtc *crtc, struct drm_atomic_commit *commit)
 	struct platform_device *pdev = to_apple_crtc(crtc)->dcp;
 	struct apple_dcp *dcp = platform_get_drvdata(pdev);
 
+	if (iomfb_is_m4(dcp)) {
+		struct drm_plane_state *plane = drm_atomic_get_new_plane_state(commit,
+									     crtc->primary);
+		struct drm_crtc_state *new = drm_atomic_get_new_crtc_state(commit, crtc);
+		struct drm_gem_dma_object *obj;
+		int ret;
+
+		if (!new || !new->active)
+			return;
+		ret = iomfb_m4_error(dcp);
+		/* A CRTC-only commit publishes no new framebuffer. */
+		if (!ret && plane) {
+			obj = plane->fb ? drm_fb_dma_get_gem_obj(plane->fb, 0) : NULL;
+			ret = obj ? iomfb_m4_present(dcp, plane->fb, obj->dma_addr,
+						       obj->base.size) : -EINVAL;
+		}
+		if (ret)
+			dcp_drm_crtc_error(to_apple_crtc(crtc), new, -EIO);
+		else
+			dcp_drm_crtc_vblank(to_apple_crtc(crtc));
+		return;
+	}
+
 	if (dcp->fw_compat == DCP_FIRMWARE_V_26_6) {
 		iomfb_v26_6_flush(dcp, crtc, commit);
 		return;
@@ -2656,7 +2717,7 @@ static void iomfb_recv_message(struct apple_dcp *dcp, u64 message)
 {
 	enum dcpep_type type = FIELD_GET(IOMFB_MESSAGE_TYPE, message);
 
-	if (dcp->fw_compat == DCP_FIRMWARE_H17P && READ_ONCE(dcp->crashed))
+	if (dcp_fail_stop(dcp) && READ_ONCE(dcp->crashed))
 		return;
 
 	if (type == IOMFB_MESSAGE_TYPE_INITIALIZED) {

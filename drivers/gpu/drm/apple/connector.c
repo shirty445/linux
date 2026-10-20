@@ -15,6 +15,7 @@
 #include <drm/drm_managed.h>
 
 #include "dcp-internal.h"
+#include "iomfb_m4.h"
 
 void apple_connector_edid_init(struct apple_connector *connector)
 {
@@ -134,6 +135,11 @@ static void dcp_afk_debugfs_root(struct platform_device *pdev, int ep, struct de
 void apple_connector_debugfs_init(struct drm_connector *connector, struct dentry *root)
 {
 	struct apple_connector *apple_con = to_apple_connector(connector);
+	struct apple_dcp *dcp = apple_con->dcp ?
+		platform_get_drvdata(apple_con->dcp) : NULL;
+
+	if (dcp && iomfb_is_m4(dcp))
+		iomfb_m4_debugfs_init(dcp, root);
 
         debugfs_create_file("ColorElements", 0444, root, apple_con,
                             &chunk_color_fops);

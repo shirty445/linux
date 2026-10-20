@@ -38,6 +38,8 @@
 
 #define DCP_MAX_PLANES 4
 
+struct apple_dcp;
+struct iomfb_m4;
 struct apple_dcp_afkep;
 struct dcp_method_entry;
 
@@ -217,6 +219,8 @@ struct dcpext_scanout;
 struct dcp_hdmi;
 
 struct apple_dcp {
+	/* Generation-specific wire/transaction state, sharing the common KMS owner. */
+	struct iomfb_m4 *v26_6;
 	/* An adopted session has no confirmed firmware DMA stop boundary. */
 	bool retain_dma;
 	bool quiescing;
@@ -635,6 +639,28 @@ struct apple_dcp {
 	/* T6030 HDMI converter service requests, see dcp-hdmi.c */
 	struct dcp_hdmi *hdmi;
 };
+
+/* T8132 firmware uses its own wire codec, with the common DRM/KMS owner. */
+static inline bool iomfb_is_m4(const struct apple_dcp *dcp)
+{
+	return IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132) &&
+	       dcp->fw_compat == DCP_FIRMWARE_M4;
+}
+
+/* Presents carry nits; one serialized IOMFB owner. */
+static inline bool dcp_presents_nits(const struct apple_dcp *dcp)
+{
+	return (dcp->fw_compat == DCP_FIRMWARE_H17P &&
+		dcp->hw.iomfb_method_profile != DCP_IOMFB_METHODS_H17G) ||
+	       iomfb_is_m4(dcp);
+}
+
+/* An adopted firmware session that fails stop and is never torn down. */
+static inline bool dcp_fail_stop(const struct apple_dcp *dcp)
+{
+	return dcp->fw_compat == DCP_FIRMWARE_H17P ||
+	       iomfb_is_m4(dcp);
+}
 
 void dcp_firmware_metadata_connection(struct apple_dcp *dcp, u64 generation, bool connected);
 void dcp_firmware_metadata_hotplug(struct apple_dcp *dcp, bool connected);

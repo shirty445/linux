@@ -29,6 +29,24 @@ config DRM_APPLE_AUDIO
 	select SND_PCM
 	select SND_DMAENGINE_PCM
 
+config DRM_APPLE_DCP_T8132
+	bool "MacBook Air M4 (J713) internal panel"
+	depends on DRM_APPLE
+	depends on APPLE_DART=y && APPLE_DART_J713_DCP
+	depends on APPLE_PMP=y || APPLE_PMP=DRM_APPLE
+	select APERTURE_HELPERS
+	help
+	  Lets the common Apple display driver adopt the J713 (T8132)
+	  internal display coprocessor and its display subsystem. The
+	  inherited firmware session uses the IOMFB 26.6 interface, while
+	  planes, CRTCs, connectors and DMA GEM use the common DRM driver.
+
+	  The boot loader must publish the qualified firmware reservations
+	  and inherited display DART mappings. The retained session cannot
+	  be unloaded or reset; its backing stays pinned until reboot.
+	  Load appledrm explicitly before the GPU, with its alias autoload
+	  disabled, after guarded admission of the inherited display DARTs.
+
 config DRM_APPLE_DEBUG
 	bool "Enable additional driver debugging"
 	depends on DRM_APPLE

@@ -44,6 +44,7 @@
 #include "apple_resume.h"
 #include "dcp.h"
 #include "plane.h"
+#include "iomfb_m4.h"
 
 #define DRIVER_NAME     "apple"
 #define DRIVER_DESC     "Apple display controller DRM driver"
@@ -243,12 +244,18 @@ static void apple_crtc_atomic_disable(struct drm_crtc *crtc,
 		}
 	}
 
-	if (crtc->state->event && !crtc->state->active) {
+	if (iomfb_is_m4(platform_get_drvdata(apple_crtc->dcp)) &&
+	    iomfb_m4_error(platform_get_drvdata(apple_crtc->dcp))) {
+		dcp_drm_crtc_error(apple_crtc, crtc_state, -EIO);
+		return;
+	}
+
+	if (crtc_state->event && !crtc_state->active) {
 		spin_lock_irq(&crtc->dev->event_lock);
-		drm_crtc_send_vblank_event(crtc, crtc->state->event);
+		drm_crtc_send_vblank_event(crtc, crtc_state->event);
 		spin_unlock_irq(&crtc->dev->event_lock);
 
-		crtc->state->event = NULL;
+		crtc_state->event = NULL;
 	}
 }
 
@@ -256,13 +263,14 @@ static void apple_crtc_atomic_begin(struct drm_crtc *crtc,
 				    struct drm_atomic_commit *commit)
 {
 	struct apple_crtc *apple_crtc = to_apple_crtc(crtc);
+	struct drm_crtc_state *new = drm_atomic_get_new_crtc_state(commit, crtc);
 	unsigned long flags;
 
-	if (crtc->state->event) {
+	if (new->event) {
 		spin_lock_irqsave(&crtc->dev->event_lock, flags);
-		apple_crtc->event = crtc->state->event;
+		apple_crtc->event = new->event;
 		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
-		crtc->state->event = NULL;
+		new->event = NULL;
 	}
 }
 
@@ -295,7 +303,7 @@ static int apple_crtc_set_crc_source(struct drm_crtc *crtc, const char *source)
 	int ret = apple_crtc_parse_crc_source(source, &enabled);
 
 	if (!ret)
-		dcp_set_crc(crtc, enabled);
+		ret = dcp_set_crc(crtc, enabled);
 
 	return ret;
 }
@@ -305,6 +313,12 @@ static int apple_crtc_verify_crc_source(struct drm_crtc *crtc,
 					size_t *values_cnt)
 {
 	bool enabled;
+	struct apple_dcp *dcp = platform_get_drvdata(to_apple_crtc(crtc)->dcp);
+
+	if (iomfb_is_m4(dcp)) {
+		*values_cnt = 0;
+		return source ? -EOPNOTSUPP : 0;
+	}
 
 	if (apple_crtc_parse_crc_source(source, &enabled) < 0) {
 		pr_warn("dcp: Invalid CRC source name %s\n", source);
@@ -321,6 +335,12 @@ static const char * const apple_crtc_crc_sources[] = {"auto"};
 static const char *const * apple_crtc_get_crc_sources(struct drm_crtc *crtc,
 						      size_t *count)
 {
+	struct apple_dcp *dcp = platform_get_drvdata(to_apple_crtc(crtc)->dcp);
+
+	if (iomfb_is_m4(dcp)) {
+		*count = 0;
+		return NULL;
+	}
 	*count = ARRAY_SIZE(apple_crtc_crc_sources);
 	return apple_crtc_crc_sources;
 }
@@ -580,10 +600,17 @@ static int apple_probe_per_dcp(struct device *dev,
 		if (dcp_fw_compat_is_14_7(dcp))
 			break;
 		plane_type = (zpos == 0) ? DRM_PLANE_TYPE_PRIMARY : DRM_PLANE_TYPE_OVERLAY;
-		planes[zpos] = apple_plane_init(drm, 1U << num, surf,
-						supports_l10r,
-						supports_xrgb2101010,
-						plane_type);
+		if (iomfb_is_m4(dcp_data)) {
+			if (zpos || surf)
+				return dev_err_probe(dev, -EINVAL,
+						     "T8132 panel needs surface 0 only\n");
+			planes[zpos] = apple_plane_init_v26_6(drm, 1U << num, surf);
+		} else {
+			planes[zpos] = apple_plane_init(drm, 1U << num, surf,
+							supports_l10r,
+							supports_xrgb2101010,
+							plane_type);
+		}
 		if (IS_ERR(planes[zpos]))
 			return PTR_ERR(planes[zpos]);
 
@@ -609,7 +636,9 @@ static int apple_probe_per_dcp(struct device *dev,
 		return ret;
 
 	drm_crtc_helper_add(&crtc->base, &apple_crtc_helper_funcs);
-	drm_crtc_enable_color_mgmt(&crtc->base, 0, true, 0);
+	/* T8132 has no qualified CTM transaction. */
+	if (!iomfb_is_m4(dcp_data))
+		drm_crtc_enable_color_mgmt(&crtc->base, 0, true, 0);
 
 	crtc->dcp = dcp;
 	*crtc_mask = drm_crtc_mask(&crtc->base);
@@ -783,6 +812,41 @@ err:
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132)
+/*
+ * The J713 loader describes the boot framebuffer only as a simple-framebuffer
+ * node; its display subsystem has no "framebuffer" memory region.  Take the
+ * aperture from the single available simple-framebuffer.
+ */
+static bool apple_boot_fb_only(struct device *dev)
+{
+	return (of_device_is_compatible(dev->of_node, "apple,t8132-display-subsystem") ||
+		of_device_is_compatible(dev->of_node, "apple,t8132-display-diagnostics")) &&
+	       of_property_match_string(dev->of_node, "memory-region-names",
+					"framebuffer") < 0;
+}
+
+static int apple_get_boot_fb_resource(struct device *dev, struct resource *fb_r)
+{
+	struct device_node *np;
+	int found = 0, ret = -ENODEV;
+
+	for_each_compatible_node(np, NULL, "simple-framebuffer") {
+		if (!of_device_is_available(np))
+			continue;
+		if (++found > 1) {
+			of_node_put(np);
+			dev_err(dev, "more than one boot framebuffer\n");
+			return -EINVAL;
+		}
+		ret = of_address_to_resource(np, 0, fb_r);
+	}
+	if (ret)
+		dev_err(dev, "no boot framebuffer aperture: %d\n", ret);
+	return ret;
+}
+#endif
+
 static const struct of_device_id apple_dcp_id_tbl[] = {
 	{ .compatible = "apple,dcp" },
 	{ .compatible = "apple,dcpext" },
@@ -790,6 +854,9 @@ static const struct of_device_id apple_dcp_id_tbl[] = {
 	{ .compatible = "apple,t6030-dcp" },
 	{ .compatible = "apple,t8122-dcp" },
 	{ .compatible = "apple,t6031-dcp" },
+#if IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132)
+	{ .compatible = "apple,t8132-dcp" },
+#endif
 	{},
 };
 
@@ -926,6 +993,12 @@ static int apple_drm_init_dcp(struct device *dev)
 		 */
 		if (ret)
 			dev_warn(dev, "DCP[%d] not ready: %d\n", i, ret);
+		/*
+		 * The J713 panel is only taken over from a started session:
+		 * without it the boot framebuffer (simpledrm) stays.
+		 */
+		if (ret && iomfb_is_m4(platform_get_drvdata(dcp[i])))
+			return ret;
 	}
 
 	/*
@@ -949,14 +1022,21 @@ static int apple_drm_init(struct device *dev)
 {
 	struct apple_drm_private *apple;
 	struct resource fb_r;
+	struct drm_crtc *crtc;
 	resource_size_t fb_size;
+	bool retained_modeset = false;
 	int ret;
 
 	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(42));
 	if (ret)
 		return ret;
 
-	ret = apple_get_fb_resource(dev, "framebuffer", &fb_r);
+#if IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132)
+	if (apple_boot_fb_only(dev))
+		ret = apple_get_boot_fb_resource(dev, &fb_r);
+	else
+#endif
+		ret = apple_get_fb_resource(dev, "framebuffer", &fb_r);
 	if (ret)
 		return ret;
 
@@ -967,13 +1047,9 @@ static int apple_drm_init(struct device *dev)
 
 	dev_set_drvdata(dev, apple);
 
-	ret = component_bind_all(dev, apple);
-	if (ret)
-		return ret;
-
 	ret = drmm_mode_config_init(&apple->drm);
 	if (ret)
-		goto err_components;
+		return ret;
 
 	/*
 	 * IOMFB::UPPipeDCP_H13P::verify_surfaces produces the error "plane
@@ -995,23 +1071,53 @@ static int apple_drm_init(struct device *dev)
 	apple->drm.mode_config.funcs = &apple_mode_config_funcs;
 	apple->drm.mode_config.helper_private = &apple_mode_config_helpers;
 
+	ret = component_bind_all(dev, apple);
+	if (ret)
+		return ret;
+
 	ret = apple_drm_init_dcp(dev);
 	if (ret)
 		goto err_unbind;
 
 	drm_mode_config_reset(&apple->drm);
+	if (IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132)) {
+		drm_for_each_crtc(crtc, &apple->drm) {
+			if (iomfb_is_m4(platform_get_drvdata(to_apple_crtc(crtc)->dcp))) {
+				retained_modeset = true;
+				break;
+			}
+		}
+	}
 
+	/* Registration makes KMS visible before the first destructive T8132
+	 * swap. Hold the modeset locks across activation so an early userspace
+	 * commit cannot race the retained startup surface.
+	 */
+	if (retained_modeset)
+		drm_modeset_lock_all(&apple->drm);
 	fb_size = fb_r.end - fb_r.start + 1;
 	ret = aperture_remove_conflicting_devices(fb_r.start, fb_size,
 						  apple_drm_driver.name);
 	if (ret) {
 		dev_err(dev, "Failed remove fb: %d\n", ret);
-		goto err_unbind;
+		goto err_unlock;
 	}
 
 	ret = drm_dev_register(&apple->drm, 0);
 	if (ret)
-		goto err_unbind;
+		goto err_unlock;
+	if (retained_modeset) {
+		drm_for_each_crtc(crtc, &apple->drm) {
+			ret = dcp_activate(to_apple_crtc(crtc)->dcp);
+			if (ret) {
+				drm_modeset_unlock_all(&apple->drm);
+				drm_dev_unregister(&apple->drm);
+				goto err_unbind;
+			}
+		}
+	}
+	if (retained_modeset)
+		drm_modeset_unlock_all(&apple->drm);
 
 	/* the fabric keeps order only once registered: catch up on probe */
 	dcp_typec_reorder();
@@ -1020,13 +1126,13 @@ static int apple_drm_init(struct device *dev)
 
 	return 0;
 
+err_unlock:
+	if (retained_modeset)
+		drm_modeset_unlock_all(&apple->drm);
 err_unbind:
 	apple_drm_quiesce_connectors(&apple->drm);
 	component_unbind_all(dev, NULL);
 	dcp_unlink(&apple->drm);
-	return ret;
-err_components:
-	component_unbind_all(dev, NULL);
 	return ret;
 }
 
@@ -1129,6 +1235,11 @@ static const struct of_device_id of_match[] = {
 	{ .compatible = "apple,t6030-display-subsystem" },
 	{ .compatible = "apple,t8122-display-subsystem" },
 	{ .compatible = "apple,t6031-display-subsystem" },
+#if IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132)
+	{ .compatible = "apple,t8132-display-subsystem" },
+	/* Accept the qualified handoff emitted by the existing boot loader. */
+	{ .compatible = "apple,t8132-display-diagnostics" },
+#endif
 	{}
 };
 MODULE_DEVICE_TABLE(of, of_match);

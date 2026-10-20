@@ -4,6 +4,7 @@
  */
 
 #include "plane.h"
+#include "dcp.h"
 
 #include "dcp-internal.h"
 #include "iomfb_internal.h"
@@ -323,6 +324,10 @@ static int apple_plane_prepare_fb(struct drm_plane *plane,
 	if (!old || !old->crtc || !old->fb || old->fb == state->fb)
 		return 0;
 
+	/* The M4 backend retains accepted and uncertain scanout itself. */
+	if (iomfb_is_m4(platform_get_drvdata(to_apple_crtc(old->crtc)->dcp)))
+		return 0;
+
 	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
@@ -588,3 +593,62 @@ struct drm_plane *apple_plane_init_v14_7(struct drm_device *dev,
 
 	return &plane->base;
 }
+
+#if IS_ENABLED(CONFIG_DRM_APPLE_DCP_T8132)
+#include "iomfb_m4_present.h"
+
+static const u32 dcp_primary_formats_v26_6[] = {
+	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_ARGB8888,
+};
+
+static int apple_plane_atomic_check_v26_6(struct drm_plane *plane,
+					struct drm_atomic_commit *commit)
+{
+	struct drm_plane_state *new = drm_atomic_get_new_plane_state(commit, plane);
+	struct drm_crtc_state *crtc_state;
+	struct dcp_m4_frame frame;
+	int ret;
+
+	if (!new->crtc)
+		return 0;
+	crtc_state = drm_atomic_get_crtc_state(commit, new->crtc);
+	if (IS_ERR(crtc_state))
+		return PTR_ERR(crtc_state);
+	ret = drm_atomic_helper_check_plane_state(new, crtc_state,
+						DRM_PLANE_NO_SCALING,
+						DRM_PLANE_NO_SCALING, false, true);
+	if (ret)
+		return ret;
+	if (!new->visible)
+		return crtc_state->active ? -EINVAL : 0;
+	return iomfb_m4_plane_frame(new, crtc_state->mode.hdisplay,
+				     crtc_state->mode.vdisplay, &frame);
+}
+
+static const struct drm_plane_helper_funcs apple_primary_plane_helper_funcs_v26_6 = {
+	.prepare_fb = apple_plane_prepare_fb,
+	.cleanup_fb = apple_plane_cleanup_fb,
+	.atomic_check = apple_plane_atomic_check_v26_6,
+	.atomic_update = apple_plane_atomic_update,
+	.get_scanout_buffer = drm_fb_dma_get_scanout_buffer,
+};
+
+struct drm_plane *apple_plane_init_v26_6(struct drm_device *dev,
+				      unsigned long possible_crtcs, u32 iomfb_surf)
+{
+	struct apple_plane *plane;
+
+	plane = drmm_universal_plane_alloc(dev, struct apple_plane, base,
+					   possible_crtcs, &apple_plane_funcs,
+					   dcp_primary_formats_v26_6,
+					   ARRAY_SIZE(dcp_primary_formats_v26_6),
+					   apple_format_modifiers,
+					   DRM_PLANE_TYPE_PRIMARY, NULL);
+	if (IS_ERR(plane))
+		return ERR_CAST(plane);
+	drm_plane_helper_add(&plane->base, &apple_primary_plane_helper_funcs_v26_6);
+	plane->iomfb_surf = iomfb_surf;
+	return &plane->base;
+}
+#endif
