@@ -36,3 +36,7 @@
 &pmc {
 	apple,static-voters = <3>;
 };
+
+&ps_gfx {
+	status = "okay";
+};

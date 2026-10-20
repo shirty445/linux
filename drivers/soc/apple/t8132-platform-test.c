@@ -20,7 +20,7 @@ static void t8132_test_legacy_descriptions(struct kunit *test)
 	}
 	mcc = of_find_compatible_node(NULL, NULL, "apple,t8132-mcc");
 	pmc = of_find_compatible_node(NULL, NULL, "apple,t8132-pmc");
-	pmp = of_find_node_by_path("pmp");
+	pmp = of_find_compatible_node(NULL, NULL, "apple,t8132-pmp-v2");
 	gpu = of_find_compatible_node(NULL, NULL, "apple,agx-t8132");
 	KUNIT_ASSERT_NOT_NULL(test, mcc);
 	KUNIT_ASSERT_NOT_NULL(test, pmc);

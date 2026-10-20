@@ -184,9 +184,12 @@ int apple_pmp_report_wait_supplier_ready(struct device *supplier, unsigned int t
 	struct platform_device *pdev;
 	struct apple_pmp_report *rep;
 	u64 status;
+	bool t8132 = of_machine_is_compatible("apple,j713") &&
+		of_device_is_compatible(supplier->of_node, "apple,t8132-pmp-v2");
 	int ret;
 
-	if (!np || !of_device_is_compatible(np, "apple,j613-25g83-pmp-report")) {
+	if (!np || !of_device_is_compatible(np, t8132 ?
+		"apple,t8132-pmp-v2-report" : "apple,j613-25g83-pmp-report")) {
 		of_node_put(np);
 		return -ENODEV;
 	}
@@ -204,7 +207,8 @@ int apple_pmp_report_wait_supplier_ready(struct device *supplier, unsigned int t
 		ret = -EPROBE_DEFER;
 	else
 		ret = readq_poll_timeout(rep->base + rep->offsets->status, status,
-					status == PMP_REPORT_READY, 1000, timeout_ms * 1000);
+					t8132 ? (status & PMP_REPORT_READY) : status == PMP_REPORT_READY,
+					1000, timeout_ms * 1000);
 	device_unlock(&pdev->dev);
 	put_device(&pdev->dev);
 	return ret;
