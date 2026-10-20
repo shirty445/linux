@@ -17,6 +17,7 @@ properties:
           - apple,agx-g13s
           - apple,agx-g14g
           - apple,agx-g14s
+          - apple,agx-t8132
           - apple,agx-t8140
       - items:
           - enum:
@@ -50,9 +51,9 @@ properties:
       - description:
           Region containing a shared handoff structure for VM
           management coordination
-      - description: Calibration blob. Mostly power-related configuration
-      - description: Calibration blob. Mostly GPU-related configuration
-      - description: Shared global variables with GPU firmware
+      - description: Power calibration blob or firmware shared-L2 page
+      - description: GPU calibration blob or preserved firmware text
+      - description: Shared global variables or preserved firmware data
 
   memory-region-names:
     minItems: 3
@@ -60,9 +61,13 @@ properties:
       - const: ttbs
       - const: pagetables
       - const: handoff
-      - const: hw-cal-a
-      - const: hw-cal-b
-      - const: globals
+      - enum: [hw-cal-a, shared-l2]
+      - enum: [hw-cal-b, fw-text]
+      - enum: [globals, fw-data]
+
+  apple,pmp:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: PMP firmware provider owning the GPU power vote and telemetry
 
   operating-points-v2: true
 
@@ -81,6 +86,50 @@ required:
   - memory-region
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: apple,agx-t8132
+    then:
+      properties:
+        reg:
+          items:
+            - description: GPU coprocessor control registers
+            - description: GPU block MMIO registers
+        mboxes:
+          maxItems: 1
+        reg-names:
+          items:
+            - const: asc
+            - const: sgx
+        memory-region:
+          minItems: 6
+        memory-region-names:
+          items:
+            - const: ttbs
+            - const: pagetables
+            - const: handoff
+            - const: shared-l2
+            - const: fw-text
+            - const: fw-data
+      required:
+        - apple,pmp
+        - power-domains
+        - reg-names
+        - memory-region-names
+    else:
+      properties:
+        apple,pmp: false
+        memory-region-names:
+          minItems: 3
+          items:
+            - const: ttbs
+            - const: pagetables
+            - const: handoff
+            - const: hw-cal-a
+            - const: hw-cal-b
+            - const: globals
   - if:
       properties:
         compatible:
@@ -108,23 +157,30 @@ allOf:
         - power-domains
         - operating-points-v2
     else:
-      properties:
-        reg:
-          items:
-            - description: GPU coprocessor control registers
-            - description: GPU block MMIO registers
-        reg-names:
-          items:
-            - const: asc
-            - const: sgx
-        mboxes:
-          maxItems: 1
-        memory-region:
-          minItems: 6
-        memory-region-names:
-          minItems: 6
-      required:
-        - apple,firmware-abi
+      if:
+        properties:
+          compatible:
+            not:
+              contains:
+                const: apple,agx-t8132
+      then:
+        properties:
+          reg:
+            items:
+              - description: GPU coprocessor control registers
+              - description: GPU block MMIO registers
+          reg-names:
+            items:
+              - const: asc
+              - const: sgx
+          mboxes:
+            maxItems: 1
+          memory-region:
+            minItems: 6
+          memory-region-names:
+            minItems: 6
+        required:
+          - apple,firmware-abi
 
 additionalProperties: false
 

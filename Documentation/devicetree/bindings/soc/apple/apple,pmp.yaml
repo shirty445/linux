@@ -47,6 +47,10 @@ properties:
   power-domains:
     maxItems: 1
 
+  apple,pmp-report:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Report provider whose running state qualifies device-power requests.
+
   apple,board-id:
     $ref: /schemas/types.yaml#/definitions/uint32
     description: Board identifier copied by the bootloader.
