@@ -541,14 +541,14 @@ config APPLE_PMP_POLICY_KUNIT_TEST
 	  Enable this only for kernel development and regression testing.
 
 config APPLE_PMP_THERMAL
-	tristate "Apple PMP CPU thermal policy"
+	tristate "Apple PMP CPU/GPU thermal policy"
 	depends on ARCH_APPLE && THERMAL_OF && ARM_APPLE_SOC_CPUFREQ
 	depends on APPLE_PMP && HWMON && MFD_MACSMC
 	select CPU_THERMAL
 	select CPU_FREQ_THERMAL
 	select THERMAL_GOV_STEP_WISE
 	help
-	  CPU cooling and fault guards fed by read-only sensors from the PMP
+	  CPU/GPU cooling, measured-rail power budgets and fault guards fed by the PMP
 	  firmware owner. Higher CPU states remain capped until protection is
 	  installed. The sensor topology is qualified for J713 only. Cooling,
 	  measured-rail budgets and the separate emergency shutdown are provisional

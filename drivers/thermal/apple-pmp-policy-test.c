@@ -62,10 +62,82 @@ static void apple_pmp_test_power_validation(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state.level[1], 8U);
 }
 
+static void apple_pmp_test_gpu_budget_freshness(struct kunit *test)
+{
+	u64 now = 10000000000ULL;
+	u64 publication = apple_pmp_gpu_budget_pack(3, now);
+
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(0, now), 8U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(publication, now), 3U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(publication,
+				 now + APPLE_PMP_POWER_STALE_NS), 3U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(publication,
+				 now + APPLE_PMP_POWER_STALE_NS + 1000000), 8U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(publication, now - 1000000), 8U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(publication | 15, now), 8U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(
+			 apple_pmp_gpu_budget_pack(0, now), now), 0U);
+	KUNIT_EXPECT_EQ(test, apple_pmp_gpu_budget_level(
+			 apple_pmp_gpu_budget_pack(100, now), now), 8U);
+}
+
+static void apple_pmp_test_shared_power_arbitration(struct kunit *test)
+{
+	struct apple_pmp_power_policy state;
+	u32 rails[3] = {2000, 500, 12000};
+	u32 idle[3] = {2000, 500, 500};
+
+	apple_pmp_power_init(&state);
+	/* A confirmed, warm, exhausted-burst policy with all domains released. */
+	for (unsigned int i = 1; i <= 3; i++)
+		apple_pmp_power_sample(&state, i * 500000000ULL, idle, 85000, 0);
+	state.level[0] = state.level[1] = state.level[2] = 0;
+	apple_pmp_power_sample(&state, 2500000000ULL, rails, 85000, 0);
+	KUNIT_EXPECT_EQ(test, state.total_mw, 14500);
+	/* GPU is the largest measured consumer even with its existing 4x weight. */
+	KUNIT_EXPECT_EQ(test, state.level[0], 0U);
+	KUNIT_EXPECT_EQ(test, state.level[1], 0U);
+	KUNIT_EXPECT_EQ(test, state.level[2], 1U);
+	/* Repeated observations cannot buy another control step. */
+	apple_pmp_power_sample(&state, 2500000000ULL, idle, 85000, 0);
+	KUNIT_EXPECT_EQ(test, state.level[2], 1U);
+	apple_pmp_power_sample(&state, 3500000000ULL, idle, 85000, 0);
+	KUNIT_EXPECT_EQ(test, state.level[2], 0U);
+	apple_pmp_power_sample(&state, 4000000000ULL, idle, 85000, -EIO);
+	KUNIT_EXPECT_TRUE(test, state.fault);
+	KUNIT_EXPECT_EQ(test, state.level[2], 8U);
+}
+
+static void apple_pmp_test_gpu_attachment(struct kunit *test)
+{
+	struct apple_pmp_power_policy state;
+	u32 rails[3] = {2000, 500, 12000};
+
+	apple_pmp_power_init(&state);
+	apple_pmp_power_set_active(&state, 3);
+	KUNIT_EXPECT_EQ(test, state.level[2], 0U);
+	for (unsigned int i = 1; i <= 3; i++)
+		apple_pmp_power_sample(&state, i * 500000000ULL, rails, 85000, 0);
+	KUNIT_EXPECT_EQ(test, state.total_mw, 2500);
+	KUNIT_EXPECT_EQ(test, state.level[2], 0U);
+	apple_pmp_power_set_active(&state, 7);
+	KUNIT_EXPECT_EQ(test, state.level[2], 8U);
+	apple_pmp_power_sample(&state, 2000000000ULL, rails, 85000, 0);
+	KUNIT_EXPECT_EQ(test, state.total_mw, 14500);
+	apple_pmp_power_set_active(&state, 3);
+	apple_pmp_power_sample(&state, 2500000000ULL, rails, 85000, -EIO);
+	KUNIT_EXPECT_EQ(test, state.level[0], 8U);
+	KUNIT_EXPECT_EQ(test, state.level[1], 8U);
+	KUNIT_EXPECT_EQ(test, state.level[2], 0U);
+}
+
 static struct kunit_case apple_pmp_policy_cases[] = {
 	KUNIT_CASE(apple_pmp_test_fault_recovery),
 	KUNIT_CASE(apple_pmp_test_critical_confirmation),
 	KUNIT_CASE(apple_pmp_test_power_validation),
+	KUNIT_CASE(apple_pmp_test_gpu_budget_freshness),
+	KUNIT_CASE(apple_pmp_test_shared_power_arbitration),
+	KUNIT_CASE(apple_pmp_test_gpu_attachment),
 	{},
 };
 
