@@ -645,6 +645,31 @@ u64 of_translate_dma_address(struct device_node *dev, const __be32 *in_addr)
 }
 EXPORT_SYMBOL(of_translate_dma_address);
 
+/**
+ * of_dma_region_cells - cell count of a device's DMA address and size tuple
+ * @dev: device tree node naming the DMA address space
+ *
+ * Use the DMA parent, which may differ from the structural parent when a
+ * dma-mem interconnect is present. This permits callers to bound or skip a
+ * tuple without translating another device's address space.
+ *
+ * Return: a positive cell count, or a negative error for an invalid parent.
+ */
+int of_dma_region_cells(struct device_node *dev)
+{
+	struct device_node *parent __free(device_node) = __of_get_dma_parent(dev);
+	int na, ns, cells;
+
+	if (!parent)
+		return -EINVAL;
+	na = of_bus_n_addr_cells(parent);
+	ns = of_bus_n_size_cells(parent);
+	if (!OF_CHECK_COUNTS(na, ns) || check_add_overflow(na, ns, &cells))
+		return -EINVAL;
+	return cells;
+}
+EXPORT_SYMBOL(of_dma_region_cells);
+
 static const __be32 *__of_translate_dma_region(struct device_node *dev,
 					       const __be32 *prop, size_t cells,
 					       phys_addr_t *start, size_t *length)

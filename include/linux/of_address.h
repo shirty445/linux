@@ -55,6 +55,7 @@ static inline int of_range_count(const struct of_range_parser *parser)
 /* Translate a DMA address from device space to CPU space */
 extern u64 of_translate_dma_address(struct device_node *dev,
 				    const __be32 *in_addr);
+extern int of_dma_region_cells(struct device_node *dev);
 extern const __be32 *of_translate_dma_region(struct device_node *dev, const __be32 *addr,
 					     phys_addr_t *start, size_t *length);
 const __be32 *of_translate_dma_region_checked(struct device_node *dev,
