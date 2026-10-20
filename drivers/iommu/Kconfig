@@ -316,6 +316,18 @@ config APPLE_DART
 
 	  Say Y here if you are using an Apple SoC.
 
+config APPLE_DART_J713_DCP
+	bool "Retained J713 display DART support"
+	depends on APPLE_DART=y && ARM64_16K_PAGES
+	help
+	  Adopt the qualified running J713 internal display DARTs. Their
+	  firmware-visible allocations, page tables and noncoherent CPU
+	  mappings remain pinned until platform reset. This limited bringup
+	  profile requires the built-in ARM64 DMA implementation; its private
+	  mapping/cache interfaces are not a modular DMA API.
+
+	  Leave this disabled for ordinary DART use, including APPLE_DART=m.
+
 config APPLE_DART_KUNIT_TEST
 	bool "KUnit tests for Apple DART domains and commands" if !KUNIT_ALL_TESTS
 	depends on APPLE_DART=y && KUNIT=y

@@ -231,7 +231,7 @@ void of_iommu_get_resv_regions(struct device *dev, struct list_head *list)
 		maps = of_get_property(it.node, "iommu-addresses", &size);
 		if (!maps)
 			continue;
-		if (size % sizeof(*maps)) {
+		if (size <= 0 || size % sizeof(*maps)) {
 			dev_warn(dev, "Invalid iommu-addresses size %d\n", size);
 			continue;
 		}
@@ -243,6 +243,8 @@ void of_iommu_get_resv_regions(struct device *dev, struct list_head *list)
 			phys_addr_t iova;
 			size_t length;
 			u32 phandle;
+			int cells;
+			const __be32 *next;
 
 			phandle = be32_to_cpup(maps++);
 			np = of_find_node_by_phandle(phandle);
@@ -262,13 +264,24 @@ void of_iommu_get_resv_regions(struct device *dev, struct list_head *list)
 				break;
 			}
 
-			/* Consume every tuple, including mappings owned by another device. */
-			maps = of_translate_dma_region_checked(np, maps, end - maps,
-							       &iova, &length);
-			if (!maps) {
-				dev_warn(dev, "Invalid iommu-addresses translation\n");
+			cells = of_dma_region_cells(np);
+			if (cells < 0 || cells > end - maps) {
+				dev_warn(dev, "Truncated or invalid iommu-addresses tuple in %pOF\n",
+					 it.node);
 				break;
 			}
+			next = maps + cells;
+			if (np != dev->of_node) {
+				/* Foreign tuples need their cell count, not DMA translation. */
+				maps = next;
+				continue;
+			}
+			if (!of_translate_dma_region_checked(np, maps, cells, &iova, &length)) {
+				dev_warn(dev, "Invalid iommu-addresses translation\n");
+				maps = next;
+				continue;
+			}
+			maps = next;
 
 			if (np == dev->of_node) {
 				int prot = IOMMU_READ | IOMMU_WRITE;
