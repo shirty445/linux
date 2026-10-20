@@ -396,7 +396,7 @@ impl Vm {
         let Some(shared) = uat.shared.try_lock() else {
             return 0;
         };
-        let contexts = shared.contexts_naming_root(inner.ttb());
+        let contexts = shared.contexts_naming_root(inner.ttb(), inner.uat_inner.m4_adopted);
         let mut purged = 0usize;
         // SAFETY: The private reservation excludes binding edits and restoration.
         // Callbacks change PTEs/flags only; all aliases stay linked.
@@ -482,7 +482,7 @@ impl Vm {
         let Some(shared) = uat.shared.try_lock() else {
             return purged;
         };
-        let contexts = shared.contexts_naming_root(inner.ttb());
+        let contexts = shared.contexts_naming_root(inner.ttb(), inner.uat_inner.m4_adopted);
         let mut unpinned = 0usize;
         // SAFETY: Exclusive residency and the private reservation exclude jobs,
         // binding edits and retirement. Callbacks change PTEs/flags only; all
