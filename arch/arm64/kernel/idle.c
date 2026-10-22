@@ -20,6 +20,7 @@ enum {
     ARM64_IDLE_WFI,
     ARM64_IDLE_YIELD,
     ARM64_IDLE_NOP,
+	ARM64_IDLE_WFE,
 } idle = ARM64_IDLE_WFI;
 
 static int __init setup_idle(char *arg)
@@ -32,6 +33,8 @@ static int __init setup_idle(char *arg)
 		idle = ARM64_IDLE_YIELD;
 	else if (!strcmp(arg, "nop"))
 		idle = ARM64_IDLE_NOP;
+	else if (!strcmp(arg, "wfe"))
+		idle = ARM64_IDLE_WFE;
 	else
 		return -1;
 
@@ -46,11 +49,31 @@ early_param("idle", setup_idle);
  * patched-out branch.
  */
 static DEFINE_STATIC_KEY_FALSE(apple_wfi_loses_regs);
+static bool apple_wait_save __initdata = true;
+
+static int __init apple_wait_policy(char *value)
+{
+	if (value && !strcmp(value, "save"))
+		apple_wait_save = true;
+	else if (value && !strcmp(value, "off"))
+		apple_wait_save = false;
+	else
+		return -EINVAL;
+	return 0;
+}
+early_param("apple_wfi", apple_wait_policy);
 
 static int __init apple_wfi_quirk_init(void)
 {
-	if (midr_is_apple_m4_or_later(read_cpuid_id())) {
+	u32 midr = read_cpuid_id();
+
+	if (apple_wait_save && midr_is_apple_m4_or_later(midr)) {
 		static_branch_enable(&apple_wfi_loses_regs);
+		/* Upgrade the loader's spin-idle only after the save path is ready. */
+		if (idle == ARM64_IDLE_NOP &&
+		    (MIDR_PARTNUM(midr) == APPLE_CPU_PART_M4_DONAN_E ||
+		     MIDR_PARTNUM(midr) == APPLE_CPU_PART_M4_DONAN_P))
+			idle = ARM64_IDLE_WFI;
 		pr_info("Apple: preserving registers across WFI\n");
 	}
 	return 0;
@@ -95,6 +118,14 @@ void __cpuidle cpu_do_idle(void)
 		} else {
 			dsb(sy);
 			wfi();
+		}
+	} else if (idle == ARM64_IDLE_WFE) {
+		if (apple_wfi_needs_save()) {
+			fpsimd_save_and_flush_cpu_state();
+			apple_cpu_wfe();
+		} else {
+			dsb(sy);
+			wfe();
 		}
 	} else if (idle == ARM64_IDLE_YIELD) {
 		dsb(sy);

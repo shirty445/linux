@@ -455,7 +455,12 @@ int apple_mbox_start(struct apple_mbox *mbox)
 		goto out_unlock;
 	}
 
-	if (mbox->hw->ap_initializes_mailboxes) {
+	if (of_property_read_bool(mbox->dev->of_node, "apple,reset-recv-fifo-on-start")) {
+		/* Only the AP-owned receive side may be reset during a handoff. */
+		writel(mbox->hw->control_empty | BIT(0),
+		       mbox->regs + mbox->hw->i2a_control);
+		readl(mbox->regs + mbox->hw->i2a_control);
+	} else if (mbox->hw->ap_initializes_mailboxes) {
 		/* The primary T8140 outbox requires its enable bit before use. */
 		control = readl(mbox->regs + mbox->hw->i2a_control);
 		writel(control | BIT(0), mbox->regs + mbox->hw->i2a_control);

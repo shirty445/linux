@@ -12,7 +12,9 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/overflow.h>
 #include <linux/platform_device.h>
+#include <linux/sizes.h>
 #include <linux/soc/apple/rtkit.h>
 #include <linux/soc/apple/rtkit-helper.h>
 #include <linux/string.h>
@@ -33,6 +35,13 @@ struct apple_rtkit_helper {
 	bool adopted;
 	/* The producer already began the J713 DockChannel input session. */
 	bool preserved;
+	bool legacy_session;
+	unsigned int boot_endpoint_count;
+	unsigned int boot_dram_count;
+	struct {
+		u64 start;
+		u64 size;
+	} boot_dram[8];
 
 	void __iomem *asc_base;
 
@@ -56,6 +65,35 @@ static int apple_rtkit_helper_shmem_setup(void *cookie, struct apple_rtkit_shmem
 		.end = bfr->iova + bfr->size - 1,
 		.name = "rtkit_map",
 	};
+	unsigned int i;
+
+	if (helper->legacy_session) {
+		if (!bfr->size || res.end < res.start)
+			return -EINVAL;
+		if (helper->sram && resource_contains(helper->sram, &res)) {
+			bfr->iomem = helper->sram_base + res.start - helper->sram->start;
+			bfr->is_mapped = true;
+			return 0;
+		}
+		for (i = 0; i < helper->boot_dram_count; i++) {
+			u64 start = helper->boot_dram[i].start;
+			u64 size = helper->boot_dram[i].size;
+
+			if (res.start < start || bfr->size > size ||
+			    res.start - start > size - bfr->size)
+				continue;
+			/* EFI-reserved buffers must not alias ordinary kernel RAM. */
+			if (region_intersects(res.start, bfr->size, IORESOURCE_SYSTEM_RAM,
+					      IORES_DESC_NONE) != REGION_DISJOINT)
+				return -EINVAL;
+			bfr->iomem = devm_ioremap(helper->dev, res.start, bfr->size);
+			if (!bfr->iomem)
+				return -ENOMEM;
+			bfr->is_mapped = true;
+			return 0;
+		}
+		return -ENODATA;
+	}
 
 	/*
 	 * An adopted session must keep the buffers negotiated by its first host.
@@ -229,6 +267,101 @@ static int apple_rtkit_helper_inherit_buffers(
 	return count;
 }
 
+static int apple_rtkit_helper_boot_buffer(struct apple_rtkit_helper *helper,
+		const char *property, u8 endpoint, struct apple_rtkit_inherited_buffer *buffer,
+		struct apple_rtkit_boot_session *session)
+{
+	struct device_node *node = helper->dev->of_node;
+	u32 value[5];
+	int cells = endpoint == 2 ? 5 : 3;
+	int ret;
+
+	if (!of_property_present(node, property))
+		return 0;
+	if (of_property_count_u32_elems(node, property) != cells)
+		return -EINVAL;
+	ret = of_property_read_u32_array(node, property, value, cells);
+	if (ret)
+		return ret;
+	buffer->endpoint = endpoint;
+	buffer->shmem.iova = ((u64)value[0] << 32) | value[1];
+	buffer->shmem.size = value[2];
+	if (!value[2] || (value[2] & 0xfff) || value[2] > SZ_1M)
+		return -EINVAL;
+	if (endpoint == 2 && (!value[3] || value[3] > 256 || !value[4] ||
+	    (u64)value[3] * ((u64)value[4] + 0x20) > value[2]))
+		return -EINVAL;
+	ret = apple_rtkit_helper_shmem_setup(helper, &buffer->shmem);
+	if (ret)
+		return ret;
+	if (endpoint == 2) {
+		session->syslog_entries = value[3];
+		session->syslog_message_size = value[4];
+	}
+	return 1;
+}
+
+/* Accept the older U-Boot property set without replacing Aurora's live-v1 path. */
+static int apple_rtkit_helper_boot_session(struct apple_rtkit_helper *helper)
+{
+	struct device_node *node = helper->dev->of_node;
+	struct apple_rtkit_inherited_buffer buffers[2] = {};
+	u8 endpoints[64];
+	u64 dram[16], end;
+	struct apple_rtkit_boot_session session = { .endpoints = endpoints };
+	int length, cells, ret, i, count = 0;
+
+	if (!of_find_property(node, "gravity,rtkit-adopt", &length))
+		return 0;
+	if (length < 0 || length > sizeof(endpoints))
+		return -EINVAL;
+	ret = of_property_read_u8_array(node, "gravity,rtkit-adopt", endpoints, length);
+	if (ret && length)
+		return ret;
+	session.endpoint_count = length;
+	if (!(readl(helper->asc_base + APPLE_ASC_CPU_CONTROL) & APPLE_ASC_CPU_CONTROL_RUN))
+		return -ENODEV;
+
+	cells = of_property_count_u64_elems(node, "gravity,rtkit-dram");
+	if (of_property_present(node, "gravity,rtkit-dram")) {
+		if (cells < 0 || cells > ARRAY_SIZE(dram) || cells % 2)
+			return -EINVAL;
+		ret = of_property_read_u64_array(node, "gravity,rtkit-dram", dram, cells);
+		if (ret && cells)
+			return ret;
+		for (i = 0; i < cells / 2; i++) {
+			if (!dram[2 * i + 1] ||
+			    check_add_overflow(dram[2 * i], dram[2 * i + 1], &end) ||
+			    end - 1 > DMA_BIT_MASK(44))
+				return -EINVAL;
+			helper->boot_dram[i].start = dram[2 * i];
+			helper->boot_dram[i].size = dram[2 * i + 1];
+		}
+		helper->boot_dram_count = cells / 2;
+	}
+	helper->legacy_session = true;
+	helper->boot_endpoint_count = length;
+	ret = apple_rtkit_helper_boot_buffer(helper, "gravity,rtkit-syslog", 2,
+					     &buffers[count], &session);
+	if (ret > 0)
+		count++;
+	else if (ret < 0)
+		dev_warn(helper->dev, "boot syslog unavailable: %d\n", ret);
+	ret = apple_rtkit_helper_boot_buffer(helper, "gravity,rtkit-crashlog", 1,
+					     &buffers[count], &session);
+	if (ret > 0)
+		count++;
+	else if (ret < 0)
+		dev_warn(helper->dev, "boot crashlog unavailable: %d\n", ret);
+
+	helper->adopted = true;
+	helper->preserved = true;
+	helper->rtk = apple_rtkit_init_boot_session(helper->dev, helper,
+						   &apple_rtkit_helper_ops, &session,
+						   buffers, count);
+	return IS_ERR(helper->rtk) ? PTR_ERR(helper->rtk) : 1;
+}
+
 static int apple_rtkit_helper_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -260,6 +393,12 @@ static int apple_rtkit_helper_probe(struct platform_device *pdev)
 					"Failed to map SRAM region\n");
 	}
 
+	ret = apple_rtkit_helper_boot_session(helper);
+	if (ret < 0)
+		return dev_err_probe(dev, ret, "Invalid bootloader RTKit session\n");
+	if (ret > 0)
+		goto keep_session;
+
 	/* Reject an unknown retained-session contract instead of cold-starting it. */
 	live = apple_rtkit_helper_live(helper);
 	if (live < 0)
@@ -268,7 +407,8 @@ static int apple_rtkit_helper_probe(struct platform_device *pdev)
 		count = apple_rtkit_helper_inherit_buffers(helper, buffers);
 		if (count < 0)
 			return dev_err_probe(dev, count, "Invalid inherited RTKit buffers\n");
-		if (of_machine_is_compatible("apple,j713") &&
+		if ((of_machine_is_compatible("apple,j713") ||
+		     of_machine_is_compatible("apple,j604")) &&
 		    of_device_is_compatible(dev->of_node, "apple,t8132-mtp"))
 			helper->preserved = true;
 	}
@@ -317,6 +457,7 @@ static int apple_rtkit_helper_probe(struct platform_device *pdev)
 			return dev_err_probe(dev, PTR_ERR(helper->rtk),
 					     "Failed to adopt RTKit\n");
 
+keep_session:
 		ret = devm_add_action_or_reset(dev, apple_rtkit_helper_release,
 					       helper->rtk);
 		if (ret)
@@ -324,7 +465,12 @@ static int apple_rtkit_helper_probe(struct platform_device *pdev)
 
 		/* There is no safe module-unload boundary for the retained session. */
 		__module_get(THIS_MODULE);
-		dev_info(dev, "adopted the running RTKit session (%d retained buffers)\n", count);
+		if (helper->legacy_session)
+			dev_info(dev, "adopted the bootloader's RTKit session (%u endpoints, %u buffers)\n",
+				 helper->boot_endpoint_count, helper->boot_dram_count);
+		else
+			dev_info(dev, "adopted the running RTKit session (%d retained buffers)\n",
+				 count);
 		return 0;
 	}
 

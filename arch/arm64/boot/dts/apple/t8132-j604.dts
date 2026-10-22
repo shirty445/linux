@@ -11,6 +11,8 @@
 
 #include "t8132.dtsi"
 #include "t8132-jxxx.dtsi"
+#include "t8132-j604-input-power.dtsi"
+#include "t8132-j604-wireless-performance.dtsi"
 #include <dt-bindings/leds/common.h>
 
 / {
@@ -31,5 +33,48 @@
 };
 
 &fpwm1 {
+	status = "okay";
+};
+
+/*
+ * ANS storage resources from the local Mac16,1 ADT capture. NVMe uses
+ * /arm-io/ans reg[9], widened to cover the linear queue doorbells and
+ * NVMMU registers, as in GravityLinux/linux 4fc326f6c25c t8132.dtsi.
+ * ASC is reg[0], with its mailbox at +0x8000.
+ */
+&ans_mbox {
+	reg = <0x4 0x81608000 0x0 0x4000>;
+	interrupts = <AIC_IRQ 1003 IRQ_TYPE_LEVEL_HIGH>,
+		<AIC_IRQ 1004 IRQ_TYPE_LEVEL_HIGH>,
+		<AIC_IRQ 1005 IRQ_TYPE_LEVEL_HIGH>,
+		<AIC_IRQ 1006 IRQ_TYPE_LEVEL_HIGH>;
+	/*
+	 * U-Boot sleeps and resets ANS at handoff; a stale crash message left
+	 * in the I2A FIFO makes Linux latch RTKit as crashed before it can
+	 * reset ANS. Drop it at channel start (spec 02 §2.2).
+	 */
+	apple,reset-recv-fifo-on-start;
+	status = "okay";
+};
+
+&sart {
+	reg = <0x4 0x85c50000 0x0 0x10000>;
+	status = "okay";
+};
+
+&nvme {
+	reg = <0x4 0xc5cc0000 0x0 0x60000>,
+	      <0x4 0x81600000 0x0 0x4000>;
+	reg-names = "nvme", "ans";
+	interrupts = <AIC_IRQ 1018 IRQ_TYPE_LEVEL_HIGH>;
+	status = "okay";
+};
+
+/* Spec 01 §1.6: J604 CPU performance controllers. */
+&cpufreq_e {
+	status = "okay";
+};
+
+&cpufreq_p {
 	status = "okay";
 };

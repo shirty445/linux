@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/spmi@388714000/pmic@e/nvmem-layout";
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			j604_boot_stage: boot-stage@f801 {
+				reg = <0xf801 1>;
+			};
+			j604_boot_errors: boot-error-count@f802,0 {
+				reg = <0xf802 1>;
+				bits = <0 4>;
+			};
+			j604_panics: panic-count@f802,4 {
+				reg = <0xf802 1>;
+				bits = <4 4>;
+			};
+			j604_shutdown: shutdown-flag@f80f,3 {
+				reg = <0xf80f 1>;
+				bits = <3 1>;
+			};
+		};
+	};
+	fragment@1 {
+		target-path = "/soc/smc@38c600000";
+		__overlay__ {
+			reboot {
+				compatible = "apple,smc-reboot";
+				nvmem-cells = <&j604_shutdown>, <&j604_boot_stage>,
+					<&j604_boot_errors>, <&j604_panics>;
+				nvmem-cell-names = "shutdown_flag", "boot_stage",
+					"boot_error_count", "panic_count";
+			};
+		};
+	};
+};

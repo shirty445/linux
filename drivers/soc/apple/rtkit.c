@@ -1312,12 +1312,16 @@ static struct apple_rtkit *__apple_rtkit_init(struct device *dev, void *cookie,
 					      const struct apple_rtkit_ops *ops,
 					      bool adopted,
 					      const struct apple_rtkit_inherited_buffer *buffers,
-					      unsigned int count)
+					      unsigned int count,
+					      const struct apple_rtkit_boot_session *session)
 {
 	struct apple_rtkit *rtk;
 	int ret;
 
 	if (!ops)
+		return ERR_PTR(-EINVAL);
+	if (session && (!adopted || session->endpoint_count > 64 ||
+	    (session->endpoint_count && !session->endpoints)))
 		return ERR_PTR(-EINVAL);
 	if (ops->protocol_version &&
 	    (ops->protocol_version < APPLE_RTKIT_MIN_SUPPORTED_VERSION ||
@@ -1370,6 +1374,39 @@ static struct apple_rtkit *__apple_rtkit_init(struct device *dev, void *cookie,
 	/* Inherited system traffic may arrive as soon as mailbox RX is armed. */
 	if (adopted)
 		apple_rtkit_mark_running(rtk);
+	if (session) {
+		size_t entry_size, ring_size;
+		unsigned int i;
+
+		bitmap_zero(rtk->endpoints, APPLE_RTKIT_MAX_ENDPOINTS);
+		set_bit(APPLE_RTKIT_EP_MGMT, rtk->endpoints);
+		for (i = 0; i < session->endpoint_count; i++)
+			set_bit(session->endpoints[i], rtk->endpoints);
+		rtk->version = APPLE_RTKIT_MAX_SUPPORTED_VERSION;
+		complete_all(&rtk->epmap_completion);
+		complete_all(&rtk->coreanalytics_completion);
+		complete_all(&rtk->iop_pwr_ack_completion);
+		complete_all(&rtk->ap_pwr_ack_completion);
+
+		if (session->syslog_entries || session->syslog_message_size) {
+			entry_size = (size_t)session->syslog_message_size;
+			if (!session->syslog_entries || !entry_size ||
+			    check_add_overflow(entry_size, (size_t)0x20, &entry_size) ||
+			    check_mul_overflow(entry_size, (size_t)session->syslog_entries,
+					       &ring_size) || ring_size > rtk->syslog_buffer.size) {
+				ret = -EINVAL;
+				goto destroy_wq;
+			}
+			rtk->syslog_msg_buffer = kzalloc(session->syslog_message_size, GFP_KERNEL);
+			if (!rtk->syslog_msg_buffer) {
+				ret = -ENOMEM;
+				goto destroy_wq;
+			}
+			rtk->syslog_n_entries = session->syslog_entries;
+			rtk->syslog_msg_size = session->syslog_message_size;
+			rtk->syslog_inherited = false;
+		}
+	}
 
 	ret = apple_rtkit_claim_rx(rtk);
 	if (ret)
@@ -1388,6 +1425,7 @@ stop_rx:
 destroy_wq:
 	destroy_workqueue(rtk->wq);
 free_rtk:
+	kfree(rtk->syslog_msg_buffer);
 	kfree(rtk);
 	return ERR_PTR(ret);
 }
@@ -1397,7 +1435,7 @@ struct apple_rtkit *apple_rtkit_init(struct device *dev, void *cookie,
 					    const struct apple_rtkit_ops *ops)
 {
 	return __apple_rtkit_init(dev, cookie, mbox_name, mbox_idx, ops, false,
-				  NULL, 0);
+				  NULL, 0, NULL);
 }
 EXPORT_SYMBOL_GPL(apple_rtkit_init);
 
@@ -1406,7 +1444,7 @@ struct apple_rtkit *apple_rtkit_init_adopted(struct device *dev, void *cookie,
 					     const struct apple_rtkit_ops *ops)
 {
 	return __apple_rtkit_init(dev, cookie, mbox_name, mbox_idx, ops, true,
-				  NULL, 0);
+				  NULL, 0, NULL);
 }
 EXPORT_SYMBOL_GPL(apple_rtkit_init_adopted);
 
@@ -1450,9 +1488,20 @@ struct apple_rtkit *apple_rtkit_init_adopted_with_buffers(
 	const struct apple_rtkit_inherited_buffer *buffers, unsigned int count)
 {
 	return __apple_rtkit_init(dev, cookie, mbox_name, mbox_idx, ops, true,
-				  buffers, count);
+				  buffers, count, NULL);
 }
 EXPORT_SYMBOL_GPL(apple_rtkit_init_adopted_with_buffers);
+
+struct apple_rtkit *apple_rtkit_init_boot_session(
+	struct device *dev, void *cookie, const struct apple_rtkit_ops *ops,
+	const struct apple_rtkit_boot_session *session,
+	const struct apple_rtkit_inherited_buffer *buffers, unsigned int count)
+{
+	if (!session)
+		return ERR_PTR(-EINVAL);
+	return __apple_rtkit_init(dev, cookie, NULL, 0, ops, true, buffers, count, session);
+}
+EXPORT_SYMBOL_GPL(apple_rtkit_init_boot_session);
 
 static int apple_rtkit_wait_for_completion(struct completion *c)
 {

@@ -12,6 +12,7 @@
 #include <linux/firmware.h>
 #include <linux/gpio/consumer.h>
 #include <linux/hid.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/soc/apple/dockchannel.h>
@@ -24,6 +25,10 @@
 
 #define COMMAND_TIMEOUT_MS 1000
 #define START_TIMEOUT_MS 2000
+
+static bool skip_firmware;
+module_param(skip_firmware, bool, 0444);
+MODULE_PARM_DESC(skip_firmware, "Leave multi-touch firmware inherited from the bootloader");
 
 #define MAX_INTERFACES 16
 
@@ -424,6 +429,8 @@ static int dchid_enable_interface(struct dchid_iface *iface)
 {
 	u8 msg[] = { CMD_ENABLE_INTERFACE, iface->index };
 
+	if (completion_done(&iface->ready))
+		return 0;
 	return dchid_comm_cmd(iface->dchid, msg, sizeof(msg));
 }
 
@@ -504,6 +511,12 @@ static int dchid_get_firmware(struct dchid_iface *iface, void **firmware, size_t
 	const struct firmware *fw;
 	struct fw_header *hdr;
 	u8 *fw_data;
+
+	if (skip_firmware) {
+		*firmware = NULL;
+		*size = 0;
+		return 0;
+	}
 
 	ret = of_property_read_string(iface->of_node, "firmware-name", &fw_name);
 	if (ret) {

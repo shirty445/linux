@@ -332,7 +332,7 @@ static bool apple_nvme_can_adopt_rtkit(struct apple_nvme *anv)
 {
 	u32 cc, csts;
 
-	if (!anv->hw->needs_ioq_registers ||
+	if (!anv->hw->needs_ioq_registers || anv->hw->cold_reset ||
 	    !(readl(anv->mmio_coproc + APPLE_ANS_COPROC_CPU_CONTROL) &
 	      APPLE_ANS_COPROC_CPU_CONTROL_RUN) ||
 	    readl(anv->mmio_nvme + APPLE_ANS_BOOT_STATUS) != APPLE_ANS_BOOT_STATUS_OK)
@@ -1561,7 +1561,7 @@ static void apple_nvme_reset_work(struct work_struct *work)
 	unsigned int nr_io_queues = 1;
 	bool phase_locked = false;
 	int ret;
-	u32 boot_status, aqa, ioqa, ioqa_depth;
+	u32 boot_status, aqa, ioqa = 0, ioqa_depth;
 	struct apple_nvme *anv =
 		container_of(work, struct apple_nvme, ctrl.reset_work);
 	enum nvme_ctrl_state state = nvme_ctrl_state(&anv->ctrl);
@@ -1757,8 +1757,9 @@ rtkit_ready:
 		if (anv->hw->needs_ioq_registers)
 			ioqa_depth--;
 		ioqa = ioqa_depth | (ioqa_depth << 16);
-		writel(ioqa, anv->mmio_nvme + APPLE_ANS_MAX_PEND_CMDS_CTRL);
-		if (anv->hw->needs_ioq_registers &&
+		if (!anv->hw->cold_reset)
+			writel(ioqa, anv->mmio_nvme + APPLE_ANS_MAX_PEND_CMDS_CTRL);
+		if (anv->hw->needs_ioq_registers && !anv->hw->cold_reset &&
 		    readl(anv->mmio_nvme + APPLE_ANS_MAX_PEND_CMDS_CTRL) != ioqa) {
 			dev_err(anv->dev, "failed to program I/O queue aperture\n");
 			ret = -EIO;
@@ -1837,7 +1838,6 @@ rtkit_ready:
 			goto out;
 		}
 	}
-	apple_nvme_init_queue(&anv->ioq);
 	if (anv->hw->needs_ioq_registers) {
 		/*
 		 * Post-M4 firmware also takes the I/O queue addresses through
@@ -1848,7 +1848,16 @@ rtkit_ready:
 				  anv->mmio_nvme + APPLE_ANS_IOCQ_REGISTER);
 		apple_nvme_writeq(anv, anv->ioq.sq_dma_addr,
 				  anv->mmio_nvme + APPLE_ANS_IOSQ_REGISTER);
+		/* GravityLinux/linux 4fc326f6c25c: publish T8132 IOQ_SIZE last. */
+		if (anv->hw->cold_reset) {
+			writel(ioqa, anv->mmio_nvme + APPLE_ANS_MAX_PEND_CMDS_CTRL);
+			if (readl(anv->mmio_nvme + APPLE_ANS_MAX_PEND_CMDS_CTRL) != ioqa) {
+				ret = -EIO;
+				goto out;
+			}
+		}
 	}
+	apple_nvme_init_queue(&anv->ioq);
 	nr_io_queues = 1;
 	if (anv->hw->has_queue_count) {
 		ret = nvme_set_queue_count(&anv->ctrl, &nr_io_queues);
@@ -2651,7 +2660,8 @@ static const struct apple_nvme_hw apple_nvme_t8103_hw = {
  */
 static const struct apple_nvme_hw apple_nvme_t8132_hw = {
 	.has_lsq_nvmmu = true,
-	.has_separate_nvmmu = true,
+	/* GravityLinux/linux 4fc326f6c25c uses the shared NVMe aperture. */
+	.has_queue_count = true,
 	.needs_ioq_registers = true,
 	.cold_reset = true,
 	.max_queue_depth = 64,

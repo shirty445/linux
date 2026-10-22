@@ -4,6 +4,16 @@ if ARCH_APPLE || COMPILE_TEST
 
 menu "Apple SoC drivers"
 
+config APPLE_J604_BOOT
+	bool "Apple J604 bootloader handoff policy"
+	depends on ARCH_APPLE && OF_DYNAMIC && OF_OVERLAY
+	default y
+	help
+	  Apply J604 command-line boot gates before OF devices are populated,
+	  preserve running input/display firmware, and optionally add the SMC
+	  poweroff description. This is built in, never a loadable module.
+	  This policy applies only to the Apple J604 machine compatible.
+
 config APPLE_DOCKCHANNEL
 	tristate "Apple DockChannel FIFO"
 	depends on ARCH_APPLE || COMPILE_TEST

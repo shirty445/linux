@@ -286,8 +286,11 @@ static const struct apple_soc_cpufreq_info soc_t8152_info = {
  * Linux restriction, not a qualified firmware thermal or safety limit.
  */
 static const struct apple_soc_cpufreq_info soc_t8132_info = {
-	.needs_thermal_owner = true,
-	.max_unmanaged_pstate = 4,
+	/*
+	 * No bootstrap ceiling: GravityLinux/linux 4fc326f6c25c drives T8132
+	 * through its T8112 data with every P-state available, which has run
+	 * on J604; the 1.8 GHz cap left software rendering unusable.
+	 */
 	.max_pstate = 31,
 	.ps1_mask = APPLE_DVFS_CMD_PS1,
 	.ps1_shift = APPLE_DVFS_CMD_PS1_SHIFT,

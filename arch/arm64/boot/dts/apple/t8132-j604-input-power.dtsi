@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/* J604 input and RTC wiring from the specification and local ADT observation. */
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/spmi/spmi.h>
+
+/ {
+	aliases {
+		keyboard = &j604_keyboard;
+		mtp = &mtp;
+	};
+};
+
+&mtp {
+	status = "okay";
+};
+
+&mtp_mbox {
+	status = "okay";
+};
+
+&mtp_dart {
+	status = "okay";
+	gravity,keep-boot-bypass;
+};
+
+&mtp_dockchannel {
+	status = "okay";
+};
+
+&mtp_hid {
+	apple,afe-reset-gpios = <&smc_gpio 0x1c GPIO_ACTIVE_LOW>;
+	apple,stm-reset-gpios = <&smc_gpio 0x1d GPIO_ACTIVE_LOW>;
+
+	multi-touch {
+		firmware-name = "apple/tpmtfw-j604.bin";
+		apple,power-method = <2>;
+	};
+
+	j604_keyboard: keyboard {
+		hid-country-code = <0>;
+		apple,keyboard-layout-id = <0>;
+	};
+
+	stm { };
+	actuator { };
+	tp_accel { };
+};
+
+&smc_mbox {
+	status = "okay";
+};
+
+&smc {
+	status = "okay";
+
+	hwmon {
+		compatible = "apple,smc-hwmon";
+	};
+
+	rtc {
+		compatible = "apple,smc-rtc";
+		nvmem-cells = <&j604_rtc_offset>;
+		nvmem-cell-names = "rtc_offset";
+	};
+};
+
+&soc {
+	/* Primary PMIC bus, independently observed at this address on Mac16,1. */
+	j604_spmi: spmi@388714000 {
+		compatible = "apple,t8132-spmi", "apple,t8103-spmi";
+		reg = <0x3 0x88714000 0 0x4000>;
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		pmic@e {
+			compatible = "apple,abbey-pmic", "apple,spmi-nvmem";
+			reg = <0xe SPMI_USID>;
+
+			nvmem-layout {
+				compatible = "fixed-layout";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				j604_rtc_offset: rtc-offset@2100 {
+					reg = <0x2100 6>;
+				};
+			};
+		};
+	};
+};

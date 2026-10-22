@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
+obj-$(CONFIG_APPLE_J604_BOOT) += apple-j604-boot.o
+apple-j604-boot-y := j604-boot.o j604-poweroff.dtbo.o
+
 obj-$(CONFIG_APPLE_DOCKCHANNEL) += apple-dockchannel.o
 apple-dockchannel-y = dockchannel.o
 

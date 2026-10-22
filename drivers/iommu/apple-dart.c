@@ -3433,6 +3433,36 @@ static bool apple_dart_streams_bypassed(struct apple_dart *dart)
 	return true;
 }
 
+/* A legacy J604 producer may clear TCRs while leaving the MTP CPU running. */
+static int apple_dart_keep_boot_bypass(struct apple_dart *dart)
+{
+	struct apple_dart_stream_map map = { .dart = dart };
+	unsigned int sid;
+	bool live = false;
+
+	if (!dart->num_streams || dart->hw->type != DART_T8110 || !dart->supports_bypass ||
+	    dart->locked || dart->tunneled ||
+	    !bitmap_empty(dart->remapped, DART_MAX_STREAMS))
+		return -EINVAL;
+
+	for (sid = 0; sid < dart->num_streams; sid++) {
+		u32 tcr = apple_dart_readl(dart, DART_TCR(dart, sid));
+
+		if (tcr & (dart->hw->tcr_enabled | dart->hw->tcr_bypass))
+			live = true;
+	}
+	if (!live) {
+		bitmap_set(map.sidmap, 0, dart->num_streams);
+		apple_dart_hw_enable_bypass(&map);
+		/* Flush the posted writes before any consumer joins the domain. */
+		apple_dart_readl(dart, DART_TCR(dart, dart->num_streams - 1));
+	}
+	/* Reuse the existing identity-domain and runtime-PM retention path. */
+	dart->retained_mtp = true;
+	dev_info(dart->dev, "Retaining boot bypass%s\n", live ? "" : " (restored TCRs)");
+	return 0;
+}
+
 static void apple_dart_iounmap_np(void *data)
 {
 	iounmap((__force void __iomem *)data);
@@ -3821,6 +3851,19 @@ params_done:
 		dart->locked = false;
 	else
 		dart->locked = apple_dart_is_locked(dart);
+	if (of_property_read_bool(dev->of_node, "gravity,keep-boot-translation")) {
+		if (tunneled || of_property_read_bool(dev->of_node,
+						    "gravity,keep-boot-bypass")) {
+			ret = -EINVAL;
+			goto err_clk_disable;
+		}
+		dart->locked = true;
+	}
+	if (of_property_read_bool(dev->of_node, "gravity,keep-boot-bypass")) {
+		ret = apple_dart_keep_boot_bypass(dart);
+		if (ret)
+			goto err_clk_disable;
+	}
 	/* Reserved table-page lifetime requires the matched three-level loader. */
 	dart->fw_handoff = apple_dart_fw_handoff_enabled(dart);
 	/* Preserve our retained-root path when no reserved-table handoff exists. */

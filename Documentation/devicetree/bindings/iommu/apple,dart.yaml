@@ -63,6 +63,18 @@ properties:
   power-domains:
     maxItems: 1
 
+  gravity,keep-boot-translation:
+    type: boolean
+    description:
+      Adopt live boot translations even when firmware did not lock this DART.
+      Do not reset the controller while the display coprocessor uses it.
+
+  gravity,keep-boot-bypass:
+    type: boolean
+    description:
+      Keep the running MTP coprocessor in identity mode without resetting its
+      DART. Restore bypass only if the loader cleared every stream's TCR.
+
   apple,dma-range:
     $ref: /schemas/types.yaml#/definitions/uint64-array
     minItems: 2

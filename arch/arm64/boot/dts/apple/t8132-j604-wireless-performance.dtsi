@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/* J604 wireless wiring: Aurora J713 port setup, GravityLinux's BCM4388
+ * function layout (4fc326f6c25c t8132-jxxx.dtsi), and spec 01 section 1.6.
+ * CLKREQ160/PERST163 agree with the local ADT capture.
+ */
+/ {
+	aliases {
+		wifi0 = &j604_wifi;
+		bluetooth0 = &j604_bluetooth;
+	};
+};
+
+&pinctrl_ap {
+	j604_wireless_pins: wireless-pins {
+		pinmux = <APPLE_PINMUX(160, 1)>;
+	};
+};
+
+&dart_apcie0 {
+	status = "okay";
+	power-domains = <&ps_apcie_gp>;
+	/* Keep the default aperture, as Gravity does. Bluetooth must be able
+	 * to allocate below 4 GiB; the Wi-Fi-only J713 high window excludes it.
+	 */
+};
+
+&pcie0 {
+	status = "okay";
+	/* GravityLinux/linux 4fc326f6c25c t8132.dtsi: both WLAN
+	 * functions on bus 1 use stream 0, not the J713-only stream 16.
+	 */
+	iommu-map = <0x100 &dart_apcie0 0 1>;
+	power-domains = <&ps_apcie_phy_sw>;
+	pinctrl-0 = <&j604_wireless_pins>;
+	pinctrl-names = "default";
+};
+
+&port00 {
+	compatible = "pciclass,0604";
+	pwren-gpios = <&smc_gpio 0x13 GPIO_ACTIVE_HIGH>;
+	reset-gpios = <&pinctrl_ap 163 GPIO_ACTIVE_LOW>;
+
+	j604_wifi: wifi@0,0 {
+		compatible = "pci14e4,4434";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		brcm,board-type = "apple,guam";
+		/* Aura supplies the actual MAC, antenna SKU and calibration. */
+		local-mac-address = [00 00 00 00 00 00];
+		apple,antenna-sku = "XX";
+	};
+
+	j604_bluetooth: bluetooth@0,1 {
+		compatible = "pci14e4,5f72";
+		reg = <0x10100 0x0 0x0 0x0 0x0>;
+		brcm,board-type = "apple,guam";
+		/* Aura supplies the actual address and Taurus calibration blobs. */
+		local-bd-address = [00 00 00 00 00 00];
+	};
+};
+
+/* Preserve the domain policy of the hardware-tested live-aon DTB. */
+&ps_apcie_gp { apple,always-on; };
+&ps_apcie_sys_gp { apple,always-on; };
+&ps_apcie_st { apple,always-on; };
+&ps_apcie_sys_st { apple,always-on; };
+&ps_apcie_phy_sw { apple,always-on; };
+
+/* Spec 01: distinguish E and P cores for asymmetric CPU scheduling. */
+&cpu_e0 { capacity-dmips-mhz = <741>; };
+&cpu_e1 { capacity-dmips-mhz = <741>; };
+&cpu_e2 { capacity-dmips-mhz = <741>; };
+&cpu_e3 { capacity-dmips-mhz = <741>; };
+&cpu_e4 { capacity-dmips-mhz = <741>; };
+&cpu_e5 { capacity-dmips-mhz = <741>; };
+&cpu_p0 { capacity-dmips-mhz = <1024>; };
+&cpu_p1 { capacity-dmips-mhz = <1024>; };
+&cpu_p2 { capacity-dmips-mhz = <1024>; };
+&cpu_p3 { capacity-dmips-mhz = <1024>; };

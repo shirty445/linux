@@ -46,6 +46,14 @@ struct apple_rtkit_inherited_buffer {
 	struct apple_rtkit_shmem shmem;
 };
 
+/* Optional metadata for a session whose endpoint map was consumed by a loader. */
+struct apple_rtkit_boot_session {
+	const u8 *endpoints;
+	unsigned int endpoint_count;
+	u32 syslog_entries;
+	u32 syslog_message_size;
+};
+
 /*
  * The co-processor places its shared buffers itself. A buffer request that
  * carries an IOVA is set up with shmem_setup and acknowledged by sending the
@@ -154,6 +162,12 @@ struct apple_rtkit *apple_rtkit_init_adopted(struct device *dev, void *cookie,
 struct apple_rtkit *apple_rtkit_init_adopted_with_buffers(
 	struct device *dev, void *cookie, const char *mbox_name, int mbox_idx,
 	const struct apple_rtkit_ops *ops,
+	const struct apple_rtkit_inherited_buffer *buffers, unsigned int count);
+
+/* Install all session metadata before mailbox RX can observe inherited traffic. */
+struct apple_rtkit *apple_rtkit_init_boot_session(
+	struct device *dev, void *cookie, const struct apple_rtkit_ops *ops,
+	const struct apple_rtkit_boot_session *session,
 	const struct apple_rtkit_inherited_buffer *buffers, unsigned int count);
 
 /*

@@ -4,5 +4,6 @@
 
 /* WFI that preserves x18-x30 on affected Apple cores. */
 void apple_cpu_wfi(void);
+void apple_cpu_wfe(void);
 
 #endif

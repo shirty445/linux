@@ -42,4 +42,10 @@ SYM_FUNC_START(apple_cpu_wfi)
 	wfi
 	apple_wait_restore
 SYM_FUNC_END(apple_cpu_wfi)
+
+SYM_FUNC_START(apple_cpu_wfe)
+	apple_wait_save
+	wfe
+	apple_wait_restore
+SYM_FUNC_END(apple_cpu_wfe)
 	.popsection
